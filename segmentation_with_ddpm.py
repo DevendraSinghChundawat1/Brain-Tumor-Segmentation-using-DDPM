@@ -1,54 +1,3 @@
-# ---
-# jupyter:
-#   jupytext:
-#     formats: ipynb,py:light
-#     text_representation:
-#       extension: .py
-#       format_name: light
-#       format_version: '1.5'
-#       jupytext_version: 1.14.4
-#   kernelspec:
-#     display_name: Python 3 (ipykernel)
-#     language: python
-#     name: python3
-# ---
-
-# +
-# Copyright (c) MONAI Consortium
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#     http://www.apache.org/licenses/LICENSE-2.0
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# -
-
-#
-# # Diffusion Models for Implicit Image Segmentation Ensembles<br>
-# <br>
-# This tutorial illustrates how to use MONAI for 2D segmentation of images using DDPMs, as proposed in [1].<br>
-# The same structure can also be used for conditional image generation, or image-to-image translation, as proposed in [2,3].
-# <br>
-# <br>
-# [1] - Wolleb et al. "Diffusion Models for Implicit Image Segmentation Ensembles", https://arxiv.org/abs/2112.03145<br>
-# [2] - Waibel et al. "A Diffusion Model Predicts 3D Shapes from 2D Microscopy Images", https://arxiv.org/abs/2208.14125<br>
-# [3] - Durrer et al. "Diffusion Models for Contrast Harmonization of Magnetic Resonance Images", https://aps.arxiv.org/abs/2303.08189
-#
-#
-
-# ## Setup environment
-
-# !python -c "import monai" || pip install -q "monai-weekly[pillow, tqdm]"
-# !python -c "import matplotlib" || pip install -q matplotlib
-# !python -c "import seaborn" || pip install -q seaborn
-
-#
-# ## Setup imports
-
-# +
 import os
 import tempfile
 import time
@@ -65,9 +14,9 @@ from monai.utils import set_determinism
 from torch.cuda.amp import GradScaler, autocast
 from tqdm import tqdm
 
-from generative.inferers import DiffusionInferer
-from generative.networks.nets.diffusion_model_unet import DiffusionModelUNet
-from generative.networks.schedulers.ddpm import DDPMScheduler
+
+from diffusion_model_unet import DiffusionModelUNet
+from ddpm import DDPMScheduler
 
 torch.multiprocessing.set_sharing_strategy("file_system")
 print_config()
@@ -75,8 +24,8 @@ print_config()
 
 # ## Setup data directory
 
-directory = os.environ.get("MONAI_DATA_DIRECTORY")
-root_dir = tempfile.mkdtemp() if directory is None else directory
+
+root_dir = ''
 
 
 #
@@ -124,7 +73,7 @@ train_ds = DecathlonDataset(
     root_dir=root_dir,
     task="Task01_BrainTumour",
     section="training",  # validation
-    cache_rate=1.0,  # you may need a few Gb of RAM... Set to 0 otherwise
+    cache_rate=1.0,  
     num_workers=4,
     download=False,  # Set download to True if the dataset hasnt been downloaded yet
     seed=0,
@@ -139,17 +88,12 @@ print(f'Train label shape {train_ds[0]["label"].shape}')
 train_loader = DataLoader(
     train_ds, batch_size=batch_size, shuffle=True, num_workers=4, drop_last=True, persistent_workers=True
 )
-# -
 
-# ## Preprocessing of the BRATS Dataset in 2D slices for validation
-# We download the BRATS validation dataset from the Decathlon dataset. We define the dataloader to load 2D slices as well as the corresponding ground truth tumor segmentation for validation.
-
-# +
 val_ds = DecathlonDataset(
     root_dir=root_dir,
     task="Task01_BrainTumour",
     section="validation",
-    cache_rate=1.0,  # you may need a few Gb of RAM... Set to 0 otherwise
+    cache_rate=1.0,  
     num_workers=4,
     download=False,  # Set download to True if the dataset hasnt been downloaded yet
     seed=0,
@@ -162,13 +106,7 @@ print(f'Validation Label shape {val_ds[0]["label"].shape}')
 val_loader = DataLoader(
     val_ds, batch_size=batch_size, shuffle=False, num_workers=4, drop_last=True, persistent_workers=True
 )
-# -
 
-#
-# ## Define network, scheduler, optimizer, and inferer
-#
-# At this step, we instantiate the MONAI components to create a DDPM, the UNET, the noise scheduler, and the inferer used for training and sampling. We are using the DDPM scheduler containing 1000 timesteps, and a 2D UNET with attention mechanisms in the 3rd level (`num_head_channels=64`).<br>
-#
 
 device = torch.device("cuda")
 
@@ -188,18 +126,13 @@ scheduler = DDPMScheduler(num_train_timesteps=1000)
 optimizer = torch.optim.Adam(params=model.parameters(), lr=2.5e-5)
 inferer = DiffusionInferer(scheduler)
 
-#
-# ### Model training of the Diffusion Model<br>
-# We train our diffusion model for 4000 epochs.\
-# In every step, we concatenate the original MR image to the noisy segmentation mask, to predict a slightly denoised segmentation mask.\
-# This is described in Equation 7 of the paper https://arxiv.org/pdf/2112.03145.pdf.
 
-n_epochs = 4000
+
+n_epochs = 500
 val_interval = 50
 epoch_loss_list = []
 val_epoch_loss_list = []
 
-# +
 
 
 scaler = GradScaler()
@@ -302,11 +235,6 @@ plt.show()
 model.eval()
 
 
-# -
-
-# Then we set the number of samples in the ensemble n. \
-# Starting from the input image (which ist the brain MR image), we follow Algorithm 1 of the paper "Diffusion Models for Implicit Image Segmentation Ensembles" (https://arxiv.org/pdf/2112.03145.pdf) n times.\
-# This gives us an ensemble of n different predicted segmentation masks.
 
 n = 5
 input_img = inputimg[None, None, ...].to(device)
@@ -366,7 +294,7 @@ def dice_coeff(im1, im2, empty_score=1.0):
     return 2.0 * intersection.sum() / im_sum
 
 
-# +
+
 for i in range(len(ensemble)):
 
     prediction = torch.where(ensemble[i] > 0.5, 1, 0).float()  # a binary mask is obtained via thresholding
